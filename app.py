@@ -1,15 +1,5 @@
 """
-app.py
-
-Gradio interface for FitFindr. The layout and wiring are already set up —
-your job is to fill in handle_query() so it calls run_agent() and maps
-the session results to the three output panels.
-
-Run with:
-    python app.py
-
-Then open the localhost URL shown in your terminal (usually http://localhost:7860,
-but check your terminal — the port may differ).
+app.py — Gradio interface for FitFindr.
 """
 
 import gradio as gr
@@ -18,43 +8,109 @@ from agent import run_agent
 from utils.data_loader import get_example_wardrobe, get_empty_wardrobe
 
 
-# ── query handler ─────────────────────────────────────────────────────────────
-
 def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
-    """
-    Called by Gradio when the user submits a query.
+    if not user_query or not user_query.strip():
+        return "Please enter a search query.", "", ""
 
-    Args:
-        user_query:     The text the user typed into the search box.
-        wardrobe_choice: Either "Example wardrobe" or "Empty wardrobe (new user)".
+    wardrobe = (
+        get_example_wardrobe()
+        if wardrobe_choice == "Example wardrobe"
+        else get_empty_wardrobe()
+    )
 
-    Returns:
-        A tuple of three strings:
-            (listing_text, outfit_suggestion, fit_card)
-        Each string maps to one of the three output panels in the UI.
+    session = run_agent(query=user_query.strip(), wardrobe=wardrobe)
 
-    TODO:
-        1. Guard against an empty query (return early with an error message).
-        2. Select the wardrobe based on wardrobe_choice.
-        3. Call run_agent() with the query and selected wardrobe.
-        4. If session["error"] is set, return the error in the first panel
-           and empty strings for the other two.
-        5. Otherwise, format session["selected_item"] into a readable listing_text
-           string and return it along with session["outfit_suggestion"] and
-           session["fit_card"].
-    """
-    # TODO: implement this function
-    return "Agent not yet implemented.", "", ""
+    if session["error"]:
+        return session["error"], "", ""
 
+    item = session["selected_item"]
+    brand_str = f" — {item['brand']}" if item.get("brand") else ""
 
-# ── interface ─────────────────────────────────────────────────────────────────
+    # Prepend fallback note to listing panel if constraints were relaxed
+    fallback_str = ""
+    if session.get("fallback_note"):
+        fallback_str = f"⚠️  {session['fallback_note']}\n\n"
+
+    # Warn if the result category doesn't match what the user asked for
+    CATEGORY_MAP = {
+        "skirt": "bottoms", "dress": "bottoms", "jeans": "bottoms",
+        "pants": "bottoms", "trousers": "bottoms", "shorts": "bottoms",
+        "tee": "tops", "shirt": "tops", "top": "tops", "blouse": "tops",
+        "sweater": "tops", "hoodie": "tops", "sweatshirt": "tops",
+        "cardigan": "tops", "vest": "tops",
+        "jacket": "outerwear", "coat": "outerwear", "blazer": "outerwear",
+        "shacket": "outerwear", "windbreaker": "outerwear", "bomber": "outerwear",
+        "sneakers": "shoes", "boots": "shoes", "heels": "shoes",
+        "loafers": "shoes", "sandals": "shoes", "shoes": "shoes",
+        "bag": "accessories", "belt": "accessories", "hat": "accessories",
+    }
+    query_words = user_query.lower().split()
+    expected_categories = {CATEGORY_MAP[w] for w in query_words if w in CATEGORY_MAP}
+    actual_category = item.get("category", "").lower()
+
+    if expected_categories and actual_category not in expected_categories:
+        # Result is in a completely different category than what was asked for
+        fallback_str += (
+            f"⚠️  No exact match found for your search — "
+            f"showing the closest available result. "
+            f"Try describing the style more specifically (e.g. 'chelsea boots', 'platform boots', 'ankle boots').\n\n"
+        )
+    elif expected_categories and actual_category in expected_categories:
+        # Right category — check for color and style mismatches
+        query_colors = [w for w in query_words if w in ["black","white","brown","tan","red","blue","green","grey","gray","navy","cream","beige"]]
+        item_colors = [c.lower() for c in item.get("colors", [])]
+        color_mismatch = query_colors and not any(qc in " ".join(item_colors) for qc in query_colors)
+
+        STYLE_MAP = {
+            "combat": "combat boots", "chelsea": "chelsea boots",
+            "platform": "platform", "ankle": "ankle boots",
+            "mary": "mary janes", "sneakers": "sneakers",
+            "loafers": "loafers", "heels": "heels",
+            "graphic": "graphic tee", "flannel": "flannel",
+            "denim": "denim", "leather": "leather",
+            "midi": "midi", "mini": "mini", "maxi": "maxi",
+        }
+        item_searchable = (item.get("title","") + " " + " ".join(item.get("style_tags",[]))).lower()
+        style_mismatches = [
+            STYLE_MAP[kw] for kw in query_words
+            if kw in STYLE_MAP and STYLE_MAP[kw].split()[0] not in item_searchable
+        ]
+
+        if color_mismatch and style_mismatches:
+            fallback_str += (
+                f"⚠️  No {' '.join(query_colors)} {', '.join(style_mismatches)} found in the dataset — "
+                f"this is the closest available match.\n\n"
+            )
+        elif color_mismatch:
+            fallback_str += (
+                f"⚠️  No {' '.join(query_colors)} version found in the dataset — "
+                f"this is the closest available match.\n\n"
+            )
+        elif style_mismatches:
+            fallback_str += (
+                f"⚠️  No {', '.join(style_mismatches)} found in the dataset — "
+                f"this is the closest available match.\n\n"
+            )
+
+    listing_text = (
+        f"{fallback_str}"
+        f"{item['title']}{brand_str}\n\n"
+        f"💵  ${item['price']:.2f}  |  {item['platform'].capitalize()}\n"
+        f"📏  Size: {item['size']}\n"
+        f"✅  Condition: {item['condition'].capitalize()}\n\n"
+        f"{item['description']}\n\n"
+        f"🏷️  Tags: {', '.join(item['style_tags'])}"
+    )
+
+    return listing_text, session["outfit_suggestion"], session["fit_card"]
+
 
 EXAMPLE_QUERIES = [
     "vintage graphic tee under $30",
     "90s track jacket in size M",
     "flowy midi skirt under $40",
     "black combat boots size 8",
-    "designer ballgown size XXS under $5",   # deliberate no-results test
+    "designer ballgown size XXS under $5",
 ]
 
 def build_interface():
@@ -82,21 +138,9 @@ Describe what you're looking for — include size and price if you want to filte
         submit_btn = gr.Button("Find it", variant="primary")
 
         with gr.Row():
-            listing_output = gr.Textbox(
-                label="🛍️ Top listing found",
-                lines=8,
-                interactive=False,
-            )
-            outfit_output = gr.Textbox(
-                label="👗 Outfit idea",
-                lines=8,
-                interactive=False,
-            )
-            fitcard_output = gr.Textbox(
-                label="✨ Your fit card",
-                lines=8,
-                interactive=False,
-            )
+            listing_output = gr.Textbox(label="🛍️ Top listing found", lines=8, interactive=False)
+            outfit_output = gr.Textbox(label="👗 Outfit idea", lines=8, interactive=False)
+            fitcard_output = gr.Textbox(label="✨ Your fit card", lines=8, interactive=False)
 
         gr.Examples(
             examples=[[q, "Example wardrobe"] for q in EXAMPLE_QUERIES],

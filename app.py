@@ -47,7 +47,6 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
     query_words = user_query.lower().split()
     expected_categories = {CATEGORY_MAP[w] for w in query_words if w in CATEGORY_MAP}
     actual_category = item.get("category", "").lower()
-
     if expected_categories and actual_category not in expected_categories:
         # Result is in a completely different category than what was asked for
         fallback_str += (
@@ -56,19 +55,23 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
             f"Try describing the style more specifically (e.g. 'chelsea boots', 'platform boots', 'ankle boots').\n\n"
         )
     elif expected_categories and actual_category in expected_categories:
-        # Right category — check for color and style mismatches
+        # Right category but check for color and style mismatches
         query_colors = [w for w in query_words if w in ["black","white","brown","tan","red","blue","green","grey","gray","navy","cream","beige"]]
         item_colors = [c.lower() for c in item.get("colors", [])]
         color_mismatch = query_colors and not any(qc in " ".join(item_colors) for qc in query_colors)
 
+        # Style keywords that should appear in title or tags
         STYLE_MAP = {
             "combat": "combat boots", "chelsea": "chelsea boots",
             "platform": "platform", "ankle": "ankle boots",
             "mary": "mary janes", "sneakers": "sneakers",
+            "boots": "boots", "chunky": "chunky",
             "loafers": "loafers", "heels": "heels",
             "graphic": "graphic tee", "flannel": "flannel",
             "denim": "denim", "leather": "leather",
             "midi": "midi", "mini": "mini", "maxi": "maxi",
+            "slip": "slip", "cargo": "cargo",
+            "cropped": "cropped", "oversized": "oversized",
         }
         item_searchable = (item.get("title","") + " " + " ".join(item.get("style_tags",[]))).lower()
         style_mismatches = [
@@ -76,19 +79,26 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
             if kw in STYLE_MAP and STYLE_MAP[kw].split()[0] not in item_searchable
         ]
 
+        # Build a natural-language description of what wasn't found
+        def natural_join(items):
+            if len(items) == 1:
+                return items[0]
+            return " ".join(items[:-1]) + " " + items[-1]
+
         if color_mismatch and style_mismatches:
+            wanted = natural_join(query_colors) + " " + natural_join(style_mismatches)
             fallback_str += (
-                f"⚠️  No {' '.join(query_colors)} {', '.join(style_mismatches)} found in the dataset — "
+                f"⚠️  No {wanted} found in the dataset — "
                 f"this is the closest available match.\n\n"
             )
         elif color_mismatch:
             fallback_str += (
-                f"⚠️  No {' '.join(query_colors)} version found in the dataset — "
+                f"⚠️  No {natural_join(query_colors)} version found in the dataset — "
                 f"this is the closest available match.\n\n"
             )
         elif style_mismatches:
             fallback_str += (
-                f"⚠️  No {', '.join(style_mismatches)} found in the dataset — "
+                f"⚠️  No {natural_join(style_mismatches)} found in the dataset — "
                 f"this is the closest available match.\n\n"
             )
 
